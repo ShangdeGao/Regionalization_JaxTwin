@@ -591,7 +591,7 @@ def plot_regions_with_data(regions, test_gdf=None, raster_path=None,
     from matplotlib.patches import Patch
     from matplotlib.lines import Line2D
 
-    plt.rcParams['font.family'] = 'Arial'
+    #plt.rcParams['font.family'] = 'Arial'
 
     if region_sources is None:
         region_sources = DEFAULT_REGION_SOURCES
@@ -698,7 +698,7 @@ def plot_regions_with_data(regions, test_gdf=None, raster_path=None,
                     sm.set_array([])
                     mappable = sm
 
-        ax.set_title(f"({letters[idx]}) {name}", fontfamily="Arial",
+        ax.set_title(f"({letters[idx]}) {name}",# fontfamily="Arial",
                      ha="left", x=0, fontsize=10)
         ax.axis("off")
 
