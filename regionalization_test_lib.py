@@ -22,6 +22,7 @@ from shapely.geometry import Point
 from IPython.display import display
 
 warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore")
 
 COMMON_CRS = "EPSG:4326"
 
