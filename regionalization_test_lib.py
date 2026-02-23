@@ -218,6 +218,97 @@ def build_test_gdf(test_data, file_format, lat_col=None, lon_col=None, value_col
         return None
 
 
+def upload_and_select():
+    """Upload a file in Colab, parse it, show column-selection widgets, and return
+    a dict that the user passes to ``confirm_selection()`` after choosing columns.
+
+    Returns:
+        context: dict with keys test_data, raster_path, file_format, and widget refs
+    """
+    import ipywidgets as widgets
+
+    from google.colab import files as colab_files
+    uploaded = colab_files.upload()
+    uploaded_filename = list(uploaded.keys())[0]
+
+    test_data, raster_path, file_format = parse_upload(uploaded_filename)
+
+    ctx = {
+        "test_data": test_data,
+        "raster_path": raster_path,
+        "file_format": file_format,
+    }
+
+    if file_format == "csv":
+        cols = list(test_data.columns)
+        numeric_cols = list(test_data.select_dtypes(include=[np.number]).columns)
+        w_lat = widgets.Dropdown(
+            options=cols, description="Latitude:",
+            value=next((c for c in cols if c.lower() in ("lat", "latitude", "y")), cols[0]))
+        w_lon = widgets.Dropdown(
+            options=cols, description="Longitude:",
+            value=next((c for c in cols if c.lower() in ("lon", "lng", "longitude", "x")), cols[0]))
+        w_val = widgets.Dropdown(
+            options=numeric_cols, description="Value col:",
+            value=numeric_cols[0] if numeric_cols else cols[0])
+        display(w_lat, w_lon, w_val)
+        ctx["w_lat"] = w_lat
+        ctx["w_lon"] = w_lon
+        ctx["w_val"] = w_val
+
+    elif file_format == "vector":
+        numeric_cols = list(test_data.select_dtypes(include=[np.number]).columns)
+        w_val = widgets.Dropdown(
+            options=numeric_cols, description="Attribute:",
+            value=numeric_cols[0] if numeric_cols else None)
+        display(w_val)
+        ctx["w_val"] = w_val
+
+    elif file_format == "raster":
+        import rasterio
+        with rasterio.open(raster_path) as src:
+            n_bands = src.count
+        w_band = widgets.Dropdown(
+            options=[str(i) for i in range(1, n_bands + 1)],
+            description="Band:", value="1")
+        display(w_band)
+        ctx["w_band"] = w_band
+
+    return ctx
+
+
+def confirm_selection(ctx):
+    """Read widget values from *ctx* (returned by ``upload_and_select``) and
+    build the test GeoDataFrame.
+
+    Returns:
+        test_gdf: GeoDataFrame (or None for raster)
+        raster_path: str (or None for vector/csv)
+        raster_band: int
+    """
+    file_format = ctx["file_format"]
+    test_data = ctx["test_data"]
+    raster_path = ctx["raster_path"]
+    test_gdf = None
+    raster_band = 1
+
+    if file_format == "csv":
+        test_gdf = build_test_gdf(
+            test_data, file_format,
+            lat_col=ctx["w_lat"].value,
+            lon_col=ctx["w_lon"].value,
+            value_col=ctx["w_val"].value)
+    elif file_format == "vector":
+        test_gdf = build_test_gdf(
+            test_data, file_format,
+            value_col=ctx["w_val"].value)
+    elif file_format == "raster":
+        raster_band = int(ctx["w_band"].value)
+        print(f"Using raster band {raster_band}")
+
+    return test_gdf, raster_path, raster_band
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Section 4: Neighbor-contrast analysis
 # ═══════════════════════════════════════════════════════════════════════
