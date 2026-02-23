@@ -324,21 +324,21 @@ def confirm_selection(ctx, regions=None):
     return test_gdf, raster_path, raster_band
 
 
-def clip_to_regions(test_gdf, raster_path, raster_band, regions):
-    """Clip test data to the combined boundary of all region schemes.
+def clip_upload_to_regions(ctx, regions):
+    """Clip raw uploaded data (inside *ctx*) to the combined boundary of
+    all region schemes.  Call this right after ``upload_and_select()``
+    and before ``confirm_selection()``.
 
     Works like ArcGIS Pro *Clip* — geometries are cut at the boundary,
     not just selected.
 
     Handles:
-      - Point / MultiPoint  (drops points outside)
-      - LineString / MultiLineString  (trims lines at boundary)
-      - Polygon / MultiPolygon  (trims polygons at boundary)
-      - Raster  (masks pixels outside boundary)
+      - CSV (DataFrame with lat/lon) — drops rows outside boundary
+      - Vector GeoDataFrame (Point/Line/Polygon) — clips geometries
+      - Raster (.tif) — masks & crops pixels outside boundary
 
     Returns:
-        test_gdf   – clipped GeoDataFrame (or original None for raster)
-        raster_path – path to clipped raster (or original None for vector)
+        ctx  – the same dict with clipped data in-place
     """
     # Build the union boundary of all region polygons
     boundary = gpd.GeoDataFrame(
@@ -346,25 +346,46 @@ def clip_to_regions(test_gdf, raster_path, raster_band, regions):
         crs=COMMON_CRS
     ).union_all()
 
-    # ── Vector data ──
-    if test_gdf is not None and len(test_gdf) > 0:
-        before = len(test_gdf)
-        test_gdf = gpd.clip(test_gdf, boundary)
-        test_gdf = test_gdf[~test_gdf.is_empty].reset_index(drop=True)
-        after = len(test_gdf)
+    file_format = ctx["file_format"]
+    test_data = ctx["test_data"]
+    raster_path = ctx["raster_path"]
+
+    # ── CSV (raw DataFrame, no geometry yet) ──
+    if file_format == "csv" and test_data is not None:
+        # Guess lat/lon columns from the widgets already created
+        lat_col = ctx["w_lat"].value
+        lon_col = ctx["w_lon"].value
+        before = len(test_data)
+        geometry = [Point(xy) for xy in zip(test_data[lon_col], test_data[lat_col])]
+        tmp_gdf = gpd.GeoDataFrame(test_data, geometry=geometry, crs=COMMON_CRS)
+        tmp_gdf = gpd.clip(tmp_gdf, boundary)
+        # Store back as plain DataFrame (confirm_selection will rebuild geometry)
+        ctx["test_data"] = pd.DataFrame(tmp_gdf.drop(columns="geometry"))
+        after = len(ctx["test_data"])
+        print(f"Clipped CSV points: {before} → {after} "
+              f"({before - after} outside boundary removed)")
+        return ctx
+
+    # ── Vector (GeoDataFrame with geometry) ──
+    if file_format == "vector" and test_data is not None:
+        before = len(test_data)
+        test_data = ensure_crs_match(test_data)
+        clipped = gpd.clip(test_data, boundary)
+        clipped = clipped[~clipped.is_empty].reset_index(drop=True)
+        ctx["test_data"] = clipped
+        after = len(clipped)
         print(f"Clipped vector data: {before} → {after} features "
               f"({before - after} removed)")
-        return test_gdf, raster_path
+        return ctx
 
-    # ── Raster data ──
-    if raster_path is not None:
+    # ── Raster ──
+    if file_format == "raster" and raster_path is not None:
         import rasterio
         from rasterio.mask import mask as rio_mask
         from shapely.ops import transform as shp_transform
         import pyproj
 
         with rasterio.open(raster_path) as src:
-            # Reproject boundary to raster CRS if needed
             if src.crs and str(src.crs) != COMMON_CRS:
                 project = pyproj.Transformer.from_crs(
                     COMMON_CRS, src.crs, always_xy=True).transform
@@ -385,12 +406,13 @@ def clip_to_regions(test_gdf, raster_path, raster_band, regions):
         with rasterio.open(clipped_path, "w", **out_meta) as dst:
             dst.write(out_image)
 
-        print(f"Clipped raster to region boundary → {clipped_path}")
-        print(f"  New size: {out_meta['width']}×{out_meta['height']}")
-        return test_gdf, clipped_path
+        ctx["raster_path"] = clipped_path
+        print(f"Clipped raster to region boundary → "
+              f"{out_meta['width']}×{out_meta['height']}")
+        return ctx
 
     print("No test data to clip.")
-    return test_gdf, raster_path
+    return ctx
 
 
 # ═══════════════════════════════════════════════════════════════════════
