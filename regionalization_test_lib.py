@@ -577,31 +577,38 @@ def plot_violin(neighbor_diffs):
 
 def plot_regions_with_data(regions, test_gdf=None, raster_path=None,
                            raster_band=1, region_sources=None):
-    """Show a 2x2 map of all region schemes with test data overlaid.
+    """2x2 maps of region schemes with test data overlay.
+
+    Uses ax.scatter / LineCollection / explicit color arrays for reliable
+    color mapping.  Percentile-based normalization (2nd–98th) so outliers
+    do not compress the scale.
 
     Handles Point, LineString, Polygon, and Raster test data.
-    Uses quantile-based color mapping so outliers don't compress the scale.
     """
+    import matplotlib.colors as mcolors
+    from matplotlib.gridspec import GridSpec
     from matplotlib.patches import Patch
     from matplotlib.lines import Line2D
-    from mapclassify import Quantiles
+
+    plt.rcParams['font.family'] = 'Arial'
 
     if region_sources is None:
         region_sources = DEFAULT_REGION_SOURCES
     names = list(region_sources.keys())
+    letters = [chr(97 + i) for i in range(len(names))]
 
-    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
-    fig.subplots_adjust(right=0.88, wspace=0.05, hspace=0.10)
-    axes = axes.flatten()
+    # ── Layout: 2×2 maps + narrow colorbar column ──
+    fig = plt.figure(figsize=(12, 10))
+    gs = GridSpec(2, 3, figure=fig, width_ratios=[1, 1, 0.05],
+                  hspace=0.12, wspace=0.10)
 
-    # Determine test data geometry type
+    # Geometry type
     geom_type = None
     if test_gdf is not None and len(test_gdf) > 0:
         geom_type = test_gdf.geometry.geom_type.iloc[0]
 
-    # Pre-read raster data once if needed
-    raster_data = None
-    raster_extent = None
+    # ── Raster prep ──
+    raster_data = raster_extent = None
     if raster_path is not None:
         import rasterio
         from rasterio.warp import transform_bounds
@@ -609,104 +616,98 @@ def plot_regions_with_data(regions, test_gdf=None, raster_path=None,
             band = src.read(raster_band).astype(float)
             if src.nodata is not None:
                 band[band == src.nodata] = np.nan
-            bounds = src.bounds
-            raster_extent = transform_bounds(src.crs, COMMON_CRS,
-                                             bounds.left, bounds.bottom,
-                                             bounds.right, bounds.top)
+            b = src.bounds
+            raster_extent = transform_bounds(
+                src.crs, COMMON_CRS, b.left, b.bottom, b.right, b.top)
             raster_data = band
 
-    # ── Quantile classification for vector data ──
-    k = 7
-    cmap_name = "viridis"
-    classifier = None
+    # ── Percentile-based color normalization ──
+    cmap_name = "magma_r"
+    cmap_obj = plt.cm.get_cmap(cmap_name)
+    norm = None
     if test_gdf is not None and "test_value" in test_gdf.columns:
-        vals = test_gdf["test_value"].dropna()
-        classifier = Quantiles(vals, k=k)
+        vals = test_gdf["test_value"].dropna().values
+        p2, p98 = np.percentile(vals, [2, 98])
+        norm = mcolors.Normalize(vmin=p2, vmax=p98)
+    elif raster_data is not None:
+        p2, p98 = np.nanpercentile(raster_data, [2, 98])
+        norm = mcolors.Normalize(vmin=p2, vmax=p98)
 
-    for i, name in enumerate(names):
-        ax = axes[i]
+    mappable = None  # will attach colorbar to this
+
+    for idx, name in enumerate(names):
+        r, c = divmod(idx, 2)
+        ax = fig.add_subplot(gs[r, c])
+
         if name not in regions:
             ax.text(0.5, 0.5, f"{name}\n(not loaded)",
                     ha="center", va="center", fontsize=12, color="red",
                     transform=ax.transAxes)
-            ax.set_title(name, fontsize=13, color="red")
-            ax.set_axis_off()
+            ax.set_title(f"({letters[idx]}) {name}", fontsize=10,
+                         color="red", loc="left")
+            ax.axis("off")
             continue
 
-        # Region polygons
-        regions[name].plot(ax=ax, edgecolor="black", linewidth=0.5,
-                           facecolor="lightblue", alpha=0.4)
+        # Region boundaries (black outlines only)
+        regions[name].boundary.plot(ax=ax, color="black", linewidth=0.5)
 
-        # Overlay test data
+        # ── Overlay test data ──
         if raster_data is not None:
-            p2, p98 = np.nanpercentile(raster_data, [2, 98])
             ext = raster_extent
-            ax.imshow(raster_data,
-                      extent=[ext[0], ext[2], ext[1], ext[3]],
-                      origin="upper", cmap=cmap_name,
-                      vmin=p2, vmax=p98, alpha=0.7, zorder=2)
+            mappable = ax.imshow(
+                raster_data, extent=[ext[0], ext[2], ext[1], ext[3]],
+                origin="upper", cmap=cmap_name, norm=norm,
+                alpha=0.7, zorder=2)
 
         elif test_gdf is not None and len(test_gdf) > 0:
-            plot_kw = dict(ax=ax, column="test_value",
-                           scheme="quantiles", k=k, cmap=cmap_name,
-                           classification_kwds={"k": k},
-                           legend=False, zorder=3)
 
             if geom_type in ("Point", "MultiPoint"):
-                test_gdf.plot(**plot_kw, markersize=12, alpha=0.85)
-            elif geom_type in ("LineString", "MultiLineString"):
-                test_gdf.plot(**plot_kw, linewidth=2, alpha=0.85)
-            elif geom_type in ("Polygon", "MultiPolygon"):
-                test_gdf.plot(**plot_kw, edgecolor="darkred",
-                              linewidth=0.4, alpha=0.6)
+                mappable = ax.scatter(
+                    test_gdf.geometry.x, test_gdf.geometry.y,
+                    c=test_gdf["test_value"], cmap=cmap_name, norm=norm,
+                    s=20, edgecolor="lightgrey", linewidth=0.3,
+                    alpha=1, zorder=3)
 
-        # Layer-type legend
-        handles = [Patch(facecolor="lightblue", edgecolor="black",
-                         alpha=0.4, label="Regions")]
-        if raster_data is not None:
-            handles.append(Patch(facecolor="#35b779", edgecolor="none",
-                                 alpha=0.7, label="Raster data"))
-        elif test_gdf is not None and len(test_gdf) > 0:
-            if geom_type in ("Point", "MultiPoint"):
-                handles.append(Line2D([0], [0], marker='o', color='w',
-                                      markerfacecolor='#21918c', markersize=6,
-                                      label="Test points"))
             elif geom_type in ("LineString", "MultiLineString"):
-                handles.append(Line2D([0], [0], color='#21918c', linewidth=1.5,
-                                      label="Test lines"))
-            elif geom_type in ("Polygon", "MultiPolygon"):
-                handles.append(Patch(facecolor='#21918c', edgecolor="darkred",
-                                     alpha=0.6, label="Test polygons"))
-        ax.legend(handles=handles, loc="lower left", fontsize=8,
-                  framealpha=0.8)
-        ax.set_title(name, fontsize=13, fontweight="bold")
-        ax.set_axis_off()
+                from matplotlib.collections import LineCollection
+                segments, seg_vals = [], []
+                for _, row in test_gdf.iterrows():
+                    geom = row.geometry
+                    val = row["test_value"]
+                    if geom.geom_type == "MultiLineString":
+                        for part in geom.geoms:
+                            segments.append(np.array(part.coords))
+                            seg_vals.append(val)
+                    else:
+                        segments.append(np.array(geom.coords))
+                        seg_vals.append(val)
+                lc = LineCollection(segments, cmap=cmap_name, norm=norm,
+                                    linewidth=1.5, zorder=3)
+                lc.set_array(np.array(seg_vals))
+                ax.add_collection(lc)
+                ax.autoscale_view()
+                mappable = lc
 
-    # ── Shared colorbar on the right, outside the maps ──
-    cax = fig.add_axes([0.90, 0.15, 0.02, 0.70])
-    if raster_data is not None:
-        p2, p98 = np.nanpercentile(raster_data, [2, 98])
-        sm = plt.cm.ScalarMappable(
-            cmap=cmap_name,
-            norm=plt.Normalize(vmin=p2, vmax=p98))
-        sm.set_array([])
-        fig.colorbar(sm, cax=cax, label="Raster value")
-    elif classifier is not None:
-        cmap_obj = plt.cm.get_cmap(cmap_name, k)
-        bounds = np.concatenate([[classifier.bins[0]],
-                                  classifier.bins])
-        # Use actual data min as the lower bound
-        bounds[0] = test_gdf["test_value"].min()
-        norm = plt.matplotlib.colors.BoundaryNorm(bounds, cmap_obj.N)
-        sm = plt.cm.ScalarMappable(cmap=cmap_obj, norm=norm)
-        sm.set_array([])
-        cb = fig.colorbar(sm, cax=cax)
-        cb.set_label("Test value (quantile classes)", fontsize=10)
-    else:
-        cax.set_visible(False)
+            elif geom_type in ("Polygon", "MultiPolygon"):
+                colors = [cmap_obj(norm(v)) for v in test_gdf["test_value"]]
+                test_gdf.plot(ax=ax, color=colors, edgecolor="lightgrey",
+                              linewidth=0.3, alpha=0.7, zorder=3)
+                if mappable is None:
+                    sm = plt.cm.ScalarMappable(cmap=cmap_obj, norm=norm)
+                    sm.set_array([])
+                    mappable = sm
+
+        ax.set_title(f"({letters[idx]}) {name}", fontfamily="Arial",
+                     ha="left", x=0, fontsize=10)
+        ax.axis("off")
+
+    # ── Colorbar in its own GridSpec column ──
+    if mappable is not None:
+        cax = fig.add_subplot(gs[:, 2])
+        fig.colorbar(mappable, cax=cax, label="Test value")
 
     plt.suptitle("Region Schemes with Test Data Overlay",
-                 fontsize=15, fontweight="bold", y=0.96)
+                 fontsize=13, fontweight="bold")
     plt.show()
 
 
