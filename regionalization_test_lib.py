@@ -324,6 +324,75 @@ def confirm_selection(ctx, regions=None):
     return test_gdf, raster_path, raster_band
 
 
+def clip_to_regions(test_gdf, raster_path, raster_band, regions):
+    """Clip test data to the combined boundary of all region schemes.
+
+    Works like ArcGIS Pro *Clip* — geometries are cut at the boundary,
+    not just selected.
+
+    Handles:
+      - Point / MultiPoint  (drops points outside)
+      - LineString / MultiLineString  (trims lines at boundary)
+      - Polygon / MultiPolygon  (trims polygons at boundary)
+      - Raster  (masks pixels outside boundary)
+
+    Returns:
+        test_gdf   – clipped GeoDataFrame (or original None for raster)
+        raster_path – path to clipped raster (or original None for vector)
+    """
+    # Build the union boundary of all region polygons
+    boundary = gpd.GeoDataFrame(
+        geometry=[gdf.geometry.union_all() for gdf in regions.values()],
+        crs=COMMON_CRS
+    ).union_all()
+
+    # ── Vector data ──
+    if test_gdf is not None and len(test_gdf) > 0:
+        before = len(test_gdf)
+        test_gdf = gpd.clip(test_gdf, boundary)
+        test_gdf = test_gdf[~test_gdf.is_empty].reset_index(drop=True)
+        after = len(test_gdf)
+        print(f"Clipped vector data: {before} → {after} features "
+              f"({before - after} removed)")
+        return test_gdf, raster_path
+
+    # ── Raster data ──
+    if raster_path is not None:
+        import rasterio
+        from rasterio.mask import mask as rio_mask
+        from shapely.ops import transform as shp_transform
+        import pyproj
+
+        with rasterio.open(raster_path) as src:
+            # Reproject boundary to raster CRS if needed
+            if src.crs and str(src.crs) != COMMON_CRS:
+                project = pyproj.Transformer.from_crs(
+                    COMMON_CRS, src.crs, always_xy=True).transform
+                clip_geom = shp_transform(project, boundary)
+            else:
+                clip_geom = boundary
+
+            out_image, out_transform = rio_mask(
+                src, [clip_geom], crop=True, nodata=src.nodata)
+            out_meta = src.meta.copy()
+            out_meta.update({
+                "height": out_image.shape[1],
+                "width": out_image.shape[2],
+                "transform": out_transform,
+            })
+
+        clipped_path = os.path.join(tempfile.gettempdir(), "clipped_raster.tif")
+        with rasterio.open(clipped_path, "w", **out_meta) as dst:
+            dst.write(out_image)
+
+        print(f"Clipped raster to region boundary → {clipped_path}")
+        print(f"  New size: {out_meta['width']}×{out_meta['height']}")
+        return test_gdf, clipped_path
+
+    print("No test data to clip.")
+    return test_gdf, raster_path
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Section 4: Neighbor-contrast analysis
 # ═══════════════════════════════════════════════════════════════════════
