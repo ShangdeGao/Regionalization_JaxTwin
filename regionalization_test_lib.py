@@ -277,9 +277,12 @@ def upload_and_select():
     return ctx
 
 
-def confirm_selection(ctx):
+def confirm_selection(ctx, regions=None):
     """Read widget values from *ctx* (returned by ``upload_and_select``) and
     build the test GeoDataFrame.
+
+    If *regions* is provided (dict {name: GeoDataFrame}), a preview map is
+    plotted showing the test data overlaid on the first region scheme.
 
     Returns:
         test_gdf: GeoDataFrame (or None for raster)
@@ -305,6 +308,17 @@ def confirm_selection(ctx):
     elif file_format == "raster":
         raster_band = int(ctx["w_band"].value)
         print(f"Using raster band {raster_band}")
+
+    # Preview map: overlay test data on the first region scheme
+    if test_gdf is not None and regions:
+        fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+        first_region = list(regions.values())[0]
+        first_region.plot(ax=ax, edgecolor="gray", facecolor="none", linewidth=0.5)
+        test_gdf.plot(ax=ax, column="test_value", legend=True, markersize=5, cmap="viridis")
+        ax.set_title("Test Data Overlay", fontsize=13, fontweight="bold")
+        ax.set_axis_off()
+        plt.tight_layout()
+        plt.show()
 
     return test_gdf, raster_path, raster_band
 
