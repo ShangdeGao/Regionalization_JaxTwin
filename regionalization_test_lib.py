@@ -588,6 +588,10 @@ def plot_regions_with_data(regions, test_gdf=None, raster_path=None,
         raster_band: int, raster band to display
         region_sources: dict of scheme names (for ordering); uses default if None
     """
+    import matplotlib.colors as mcolors
+    from matplotlib.patches import Patch
+    from matplotlib.lines import Line2D
+
     if region_sources is None:
         region_sources = DEFAULT_REGION_SOURCES
     names = list(region_sources.keys())
@@ -600,22 +604,33 @@ def plot_regions_with_data(regions, test_gdf=None, raster_path=None,
     if test_gdf is not None and len(test_gdf) > 0:
         geom_type = test_gdf.geometry.geom_type.iloc[0]
 
+    # Build shared color normalization for vector test data
+    cmap = plt.cm.viridis
+    norm = None
+    if test_gdf is not None and "test_value" in test_gdf.columns:
+        vmin = test_gdf["test_value"].min()
+        vmax = test_gdf["test_value"].max()
+        norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
+
     # Pre-read raster data once if needed
     raster_data = None
     raster_extent = None
+    raster_norm = None
     if raster_path is not None:
         import rasterio
         with rasterio.open(raster_path) as src:
             band = src.read(raster_band)
             band = band.astype(float)
-            band[band == src.nodata] = np.nan if src.nodata is not None else band
+            if src.nodata is not None:
+                band[band == src.nodata] = np.nan
             bounds = src.bounds
-            # Reproject bounds to EPSG:4326 if needed
             from rasterio.warp import transform_bounds
             raster_extent = transform_bounds(src.crs, COMMON_CRS,
                                              bounds.left, bounds.bottom,
                                              bounds.right, bounds.top)
             raster_data = band
+            raster_norm = mcolors.Normalize(
+                vmin=np.nanmin(band), vmax=np.nanmax(band))
 
     for i, name in enumerate(names):
         ax = axes[i]
@@ -629,65 +644,63 @@ def plot_regions_with_data(regions, test_gdf=None, raster_path=None,
 
         # Plot region polygons
         regions[name].plot(ax=ax, edgecolor="black", linewidth=0.5,
-                           facecolor="lightblue", alpha=0.4, label="Regions")
+                           facecolor="lightblue", alpha=0.4)
 
         # Overlay test data
         if raster_data is not None:
-            # Raster overlay
             ext = raster_extent  # (left, bottom, right, top)
-            im = ax.imshow(raster_data, extent=[ext[0], ext[2], ext[1], ext[3]],
-                           origin="upper", cmap="viridis", alpha=0.7, zorder=2)
-            if i == 0:
-                cbar = fig.colorbar(im, ax=ax, fraction=0.03, pad=0.04)
-                cbar.set_label("Raster value", fontsize=9)
+            ax.imshow(raster_data, extent=[ext[0], ext[2], ext[1], ext[3]],
+                      origin="upper", cmap=cmap, norm=raster_norm,
+                      alpha=0.7, zorder=2)
 
         elif test_gdf is not None and len(test_gdf) > 0:
-            if geom_type == "Point" or geom_type == "MultiPoint":
-                test_gdf.plot(ax=ax, column="test_value", cmap="plasma",
-                              markersize=8, alpha=0.8, zorder=3,
-                              legend=(i == 0),
-                              legend_kwds={"label": "Test value",
-                                           "shrink": 0.6})
+            # Use explicit vmin/vmax so all 4 subplots share the same scale
+            plot_kw = dict(ax=ax, column="test_value", cmap=cmap,
+                           vmin=norm.vmin, vmax=norm.vmax,
+                           legend=False, zorder=3)
 
+            if geom_type in ("Point", "MultiPoint"):
+                test_gdf.plot(**plot_kw, markersize=10, alpha=0.8)
             elif geom_type in ("LineString", "MultiLineString"):
-                test_gdf.plot(ax=ax, column="test_value", cmap="plasma",
-                              linewidth=1.5, alpha=0.85, zorder=3,
-                              legend=(i == 0),
-                              legend_kwds={"label": "Test value",
-                                           "shrink": 0.6})
-
+                test_gdf.plot(**plot_kw, linewidth=1.5, alpha=0.85)
             elif geom_type in ("Polygon", "MultiPolygon"):
-                test_gdf.plot(ax=ax, column="test_value", cmap="plasma",
-                              edgecolor="darkred", linewidth=0.4,
-                              alpha=0.55, zorder=3,
-                              legend=(i == 0),
-                              legend_kwds={"label": "Test value",
-                                           "shrink": 0.6})
+                test_gdf.plot(**plot_kw, edgecolor="darkred",
+                              linewidth=0.4, alpha=0.55)
 
-        # Build legend handles
-        from matplotlib.patches import Patch
-        from matplotlib.lines import Line2D
+        # Per-subplot legend identifying the layers
         handles = [Patch(facecolor="lightblue", edgecolor="black",
                          alpha=0.4, label="Regions")]
         if raster_data is not None:
             handles.append(Patch(facecolor="#35b779", edgecolor="none",
                                  alpha=0.7, label="Raster data"))
         elif test_gdf is not None and len(test_gdf) > 0:
-            if geom_type == "Point" or geom_type == "MultiPoint":
+            if geom_type in ("Point", "MultiPoint"):
                 handles.append(Line2D([0], [0], marker='o', color='w',
-                                      markerfacecolor='#cc4778', markersize=6,
+                                      markerfacecolor='#21918c', markersize=6,
                                       label="Test points"))
             elif geom_type in ("LineString", "MultiLineString"):
-                handles.append(Line2D([0], [0], color='#cc4778', linewidth=1.5,
+                handles.append(Line2D([0], [0], color='#21918c', linewidth=1.5,
                                       label="Test lines"))
             elif geom_type in ("Polygon", "MultiPolygon"):
-                handles.append(Patch(facecolor='#cc4778', edgecolor="darkred",
+                handles.append(Patch(facecolor='#21918c', edgecolor="darkred",
                                      alpha=0.55, label="Test polygons"))
 
         ax.legend(handles=handles, loc="lower left", fontsize=8,
                   framealpha=0.8)
         ax.set_title(name, fontsize=13, fontweight="bold")
         ax.set_axis_off()
+
+    # Single shared colorbar for all subplots
+    if raster_data is not None:
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=raster_norm)
+        sm.set_array([])
+        cbar = fig.colorbar(sm, ax=axes, fraction=0.02, pad=0.04)
+        cbar.set_label("Raster value", fontsize=11)
+    elif norm is not None:
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+        sm.set_array([])
+        cbar = fig.colorbar(sm, ax=axes, fraction=0.02, pad=0.04)
+        cbar.set_label("Test value", fontsize=11)
 
     plt.suptitle("Region Schemes with Test Data Overlay",
                  fontsize=15, fontweight="bold")
