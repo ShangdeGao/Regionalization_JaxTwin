@@ -30,14 +30,14 @@ COMMON_CRS = "EPSG:4326"
 REPO_BASE = "https://github.com/ShangdeGao/Regionalization_JaxTwin/raw/main"
 
 DEFAULT_REGION_SOURCES = {
-    "My Regions":    f"{REPO_BASE}/Regionalization%20Output.zip",
+    "Regionalization Output":    f"{REPO_BASE}/Regionalization%20Output.zip",
     "TAZ":           f"{REPO_BASE}/TAZ_Test.zip",
     "Census Tracts": f"{REPO_BASE}/Census%20Tract_Test.zip",
     "Neighborhoods": f"{REPO_BASE}/Neighborhood_Test.zip",
 }
 
 DEFAULT_REGION_ID_COLS = {
-    "My Regions":    "value_gsd",
+    "Regionalization Output":    "value_gsd",
     "TAZ":           "TAZCE10",
     "Census Tracts": "GEOID",
     "Neighborhoods": "REGIONID",
@@ -341,7 +341,7 @@ def run_analysis(test_gdf, raster_path, regions, region_id_cols,
 # Section 5: Statistical tests
 # ═══════════════════════════════════════════════════════════════════════
 
-def run_mann_whitney(neighbor_diffs, reference="My Regions"):
+def run_mann_whitney(neighbor_diffs, reference="Regionalization Output"):
     """Run Mann-Whitney U tests: Other < Reference (alternative='less').
 
     If p < 0.05: the other scheme has lower diffs → Reference is better.
@@ -376,7 +376,7 @@ def run_mann_whitney(neighbor_diffs, reference="My Regions"):
 # Section 6: Plotting
 # ═══════════════════════════════════════════════════════════════════════
 
-def plot_cdf(neighbor_diffs, mw_results, reference="My Regions"):
+def plot_cdf(neighbor_diffs, mw_results, reference="Regionalization Output"):
     """CDF comparison plots: each other scheme vs. Reference."""
     ref_diffs = neighbor_diffs.get(reference, np.array([]))
     comparison_names = [n for n in neighbor_diffs if n != reference]
@@ -425,7 +425,7 @@ def plot_cdf(neighbor_diffs, mw_results, reference="My Regions"):
     plt.show()
 
 
-def plot_bar_chart(neighbor_diffs, reference="My Regions"):
+def plot_bar_chart(neighbor_diffs, reference="Regionalization Output"):
     """Bar chart of mean neighbor |diff| per scheme (higher = better)."""
     names = list(neighbor_diffs.keys())
     means = [np.mean(d) if len(d) > 0 else 0 for d in neighbor_diffs.values()]
@@ -475,7 +475,7 @@ def plot_violin(neighbor_diffs):
 # ═══════════════════════════════════════════════════════════════════════
 
 def show_comparison_table(neighbor_diffs, scheme_points, regions,
-                          region_id_cols, mw_results, reference="My Regions"):
+                          region_id_cols, mw_results, reference="Regionalization Output"):
     """Display a styled comparison table."""
     rows = []
     for name in regions:
@@ -518,7 +518,7 @@ def show_comparison_table(neighbor_diffs, scheme_points, regions,
     return df
 
 
-def print_summary(neighbor_diffs, mw_results, reference="My Regions"):
+def print_summary(neighbor_diffs, mw_results, reference="Regionalization Output"):
     """Print auto-generated interpretation summary."""
     if not neighbor_diffs:
         print("No results available.")
