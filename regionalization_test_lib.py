@@ -575,6 +575,126 @@ def plot_violin(neighbor_diffs):
     plt.show()
 
 
+def plot_regions_with_data(regions, test_gdf=None, raster_path=None,
+                           raster_band=1, region_sources=None):
+    """Show a 2x2 map of all region schemes with test data overlaid.
+
+    Handles Point, LineString, Polygon, and Raster test data.
+
+    Parameters:
+        regions: dict {name: GeoDataFrame}
+        test_gdf: GeoDataFrame with test data (None for raster input)
+        raster_path: path to GeoTIFF (None for vector/csv input)
+        raster_band: int, raster band to display
+        region_sources: dict of scheme names (for ordering); uses default if None
+    """
+    if region_sources is None:
+        region_sources = DEFAULT_REGION_SOURCES
+    names = list(region_sources.keys())
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+    axes = axes.flatten()
+
+    # Determine test data geometry type
+    geom_type = None
+    if test_gdf is not None and len(test_gdf) > 0:
+        geom_type = test_gdf.geometry.geom_type.iloc[0]
+
+    # Pre-read raster data once if needed
+    raster_data = None
+    raster_extent = None
+    if raster_path is not None:
+        import rasterio
+        with rasterio.open(raster_path) as src:
+            band = src.read(raster_band)
+            band = band.astype(float)
+            band[band == src.nodata] = np.nan if src.nodata is not None else band
+            bounds = src.bounds
+            # Reproject bounds to EPSG:4326 if needed
+            from rasterio.warp import transform_bounds
+            raster_extent = transform_bounds(src.crs, COMMON_CRS,
+                                             bounds.left, bounds.bottom,
+                                             bounds.right, bounds.top)
+            raster_data = band
+
+    for i, name in enumerate(names):
+        ax = axes[i]
+        if name not in regions:
+            ax.text(0.5, 0.5, f"{name}\n(not loaded)",
+                    ha="center", va="center", fontsize=12, color="red",
+                    transform=ax.transAxes)
+            ax.set_title(name, fontsize=13, color="red")
+            ax.set_axis_off()
+            continue
+
+        # Plot region polygons
+        regions[name].plot(ax=ax, edgecolor="black", linewidth=0.5,
+                           facecolor="lightblue", alpha=0.4, label="Regions")
+
+        # Overlay test data
+        if raster_data is not None:
+            # Raster overlay
+            ext = raster_extent  # (left, bottom, right, top)
+            im = ax.imshow(raster_data, extent=[ext[0], ext[2], ext[1], ext[3]],
+                           origin="upper", cmap="viridis", alpha=0.7, zorder=2)
+            if i == 0:
+                cbar = fig.colorbar(im, ax=ax, fraction=0.03, pad=0.04)
+                cbar.set_label("Raster value", fontsize=9)
+
+        elif test_gdf is not None and len(test_gdf) > 0:
+            if geom_type == "Point" or geom_type == "MultiPoint":
+                test_gdf.plot(ax=ax, column="test_value", cmap="plasma",
+                              markersize=8, alpha=0.8, zorder=3,
+                              legend=(i == 0),
+                              legend_kwds={"label": "Test value",
+                                           "shrink": 0.6})
+
+            elif geom_type in ("LineString", "MultiLineString"):
+                test_gdf.plot(ax=ax, column="test_value", cmap="plasma",
+                              linewidth=1.5, alpha=0.85, zorder=3,
+                              legend=(i == 0),
+                              legend_kwds={"label": "Test value",
+                                           "shrink": 0.6})
+
+            elif geom_type in ("Polygon", "MultiPolygon"):
+                test_gdf.plot(ax=ax, column="test_value", cmap="plasma",
+                              edgecolor="darkred", linewidth=0.4,
+                              alpha=0.55, zorder=3,
+                              legend=(i == 0),
+                              legend_kwds={"label": "Test value",
+                                           "shrink": 0.6})
+
+        # Build legend handles
+        from matplotlib.patches import Patch
+        from matplotlib.lines import Line2D
+        handles = [Patch(facecolor="lightblue", edgecolor="black",
+                         alpha=0.4, label="Regions")]
+        if raster_data is not None:
+            handles.append(Patch(facecolor="#35b779", edgecolor="none",
+                                 alpha=0.7, label="Raster data"))
+        elif test_gdf is not None and len(test_gdf) > 0:
+            if geom_type == "Point" or geom_type == "MultiPoint":
+                handles.append(Line2D([0], [0], marker='o', color='w',
+                                      markerfacecolor='#cc4778', markersize=6,
+                                      label="Test points"))
+            elif geom_type in ("LineString", "MultiLineString"):
+                handles.append(Line2D([0], [0], color='#cc4778', linewidth=1.5,
+                                      label="Test lines"))
+            elif geom_type in ("Polygon", "MultiPolygon"):
+                handles.append(Patch(facecolor='#cc4778', edgecolor="darkred",
+                                     alpha=0.55, label="Test polygons"))
+
+        ax.legend(handles=handles, loc="lower left", fontsize=8,
+                  framealpha=0.8)
+        ax.set_title(name, fontsize=13, fontweight="bold")
+        ax.set_axis_off()
+
+    plt.suptitle("Region Schemes with Test Data Overlay",
+                 fontsize=15, fontweight="bold")
+    plt.tight_layout()
+    plt.show()
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Section 7: Comparison table & summary
 # ═══════════════════════════════════════════════════════════════════════
